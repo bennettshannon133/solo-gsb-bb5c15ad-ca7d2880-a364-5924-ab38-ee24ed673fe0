@@ -12,9 +12,11 @@ import CyclePanel from '../src/components/CyclePanel'
 import ObservationEditor from '../src/components/ObservationEditor'
 import AuditPanel from '../src/components/AuditPanel'
 import SnapshotPanel from '../src/components/SnapshotPanel'
+import SlackPanel, { SlackResultView } from '../src/components/SlackPanel'
 import { analyze, traceBound } from '../src/lib/graph'
 import { auditRedundancy } from '../src/lib/audit'
-import { buildConsistentSample } from '../src/lib/samples'
+import { analyzeUniformSlack } from '../src/lib/slack'
+import { buildConsistentSample, buildContradictionSample } from '../src/lib/samples'
 
 let failed = 0
 /** React SSR 会在插值文本之间插入 <!-- -->，先去除再做片段匹配 */
@@ -206,6 +208,74 @@ const pausedHtml = renderToString(
   h(AuditPanel, { events: auditEvents, constraints: auditConstraints, audit: null }),
 )
 check(pausedHtml, '冗余证词审计已暂停', '审计面板：矛盾暂停提示')
+
+// 5) 统一宽限分析面板：App 内嵌入口 + 输入区
+check(appHtml, '统一宽限分析', '统一宽限分析')
+check(appHtml, '分钟上限 M', '统一宽限分析：上限输入')
+check(appHtml, '求解最小宽限 ε', '统一宽限分析：求解按钮')
+check(appHtml, '单调二分', '统一宽限分析：单调性说明')
+
+// 5b) 面板独立渲染（初始态：只读说明 + 参与范围）
+const sc = buildContradictionSample()
+const slackPanelHtml = renderToString(
+  h(SlackPanel, { events: sc.events, constraints: sc.constraints, observations: sc.observations }),
+)
+check(slackPanelHtml, '统一宽限分析', '宽限面板：独立渲染')
+check(slackPanelHtml, '当前 4 条启用证词参与放宽', '宽限面板：参与范围')
+check(slackPanelHtml, '1 条观测保持不变', '宽限面板：观测不变')
+
+// 5c) 成功结果：ε = 10，放宽区间清单 + 事件时间窗
+const solved = analyzeUniformSlack(sc.events, sc.constraints, sc.observations, 60)
+const solvedHtml = renderToString(
+  h(SlackResultView, {
+    analysis: solved,
+    events: sc.events,
+    constraints: sc.constraints,
+    observations: sc.observations,
+  }),
+)
+check(solvedHtml, '最小统一宽限', '宽限结果：成功')
+check(solvedHtml, 'ε = 10', '宽限结果：最小 ε')
+check(solvedHtml, '次可满足性判定（非逐分钟枚举）', '宽限结果：二分说明')
+check(solvedHtml, '放宽后的证词区间', '宽限结果：放宽区间清单')
+check(solvedHtml, '[0, 30]', '宽限结果：证词一放宽区间')
+check(solvedHtml, '下界截断为 0', '宽限结果：下界截断标记')
+check(solvedHtml, '放宽后的事件绝对时间窗', '宽限结果：事件时间窗')
+check(solvedHtml, '可定时', '宽限结果：窗口状态')
+
+// 5d) 上限内无解：展示 ε = M 时的矛盾链
+const unsolvable = analyzeUniformSlack(sc.events, sc.constraints, sc.observations, 5)
+const unsolvableHtml = renderToString(
+  h(SlackResultView, {
+    analysis: unsolvable,
+    events: sc.events,
+    constraints: sc.constraints,
+    observations: sc.observations,
+  }),
+)
+check(unsolvableHtml, '不存在可行宽限', '宽限结果：无解提示')
+check(unsolvableHtml, '可复核的矛盾环', '宽限结果：ε = M 矛盾链')
+
+// 5e) 无绝对观测：全部事件标注无法定时
+const noObsEvents = [
+  { id: 'a', name: 'A' },
+  { id: 'b', name: 'B' },
+]
+const noObsConstraints = [
+  { id: 'c1', aId: 'a', bId: 'b', relation: 'earlier' as const, min: 5, max: 10, enabled: true },
+  { id: 'c2', aId: 'b', bId: 'a', relation: 'earlier' as const, min: 5, max: 10, enabled: true },
+]
+const noObs = analyzeUniformSlack(noObsEvents, noObsConstraints, [], 20)
+const noObsHtml = renderToString(
+  h(SlackResultView, {
+    analysis: noObs,
+    events: noObsEvents,
+    constraints: noObsConstraints,
+    observations: [],
+  }),
+)
+check(noObsHtml, 'ε = 5', '宽限结果：无观测最小 ε')
+check(noObsHtml, '无法定时', '宽限结果：无观测标注无法定时')
 
 if (failed > 0) process.exit(1)
 console.log('smoke ok')

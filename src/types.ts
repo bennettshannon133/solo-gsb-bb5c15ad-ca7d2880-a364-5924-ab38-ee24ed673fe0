@@ -250,6 +250,49 @@ export interface AuditEntry {
   verdict: AuditVerdict
 }
 
+/** 统一宽限分析中一条启用证词的放宽结果（方向保留，仅区间变化） */
+export interface RelaxedConstraintInfo {
+  /** 约束 id */
+  constraintId: string
+  /** 约束在录入顺序中的序号（从 1 开始，展示用） */
+  order: number
+  aId: string
+  bId: string
+  relation: Relation
+  /** 原始区间 [min, max]（分钟） */
+  min: number
+  max: number
+  /** 统一放宽 ε 后的区间：[max(0, min−ε), max+ε] */
+  relaxedMin: number
+  relaxedMax: number
+}
+
+/**
+ * 统一宽限分析结果。
+ * 对当前案卷（启用证词 + 全部原有观测；停用证词不产生边）求最小整数宽限
+ * ε（0 ≤ ε ≤ cap）：每条启用证词的间隔 [min, max] 统一变为
+ * [max(0, min−ε), max+ε] 后，全部启用证词与原有观测同时相容。
+ * 利用可满足性关于 ε 的单调性二分搜索，不逐分钟枚举。
+ */
+export interface SlackAnalysis {
+  /** 用户输入的非负整数分钟上限 M */
+  cap: number
+  /** 上限内是否存在可行宽限 */
+  solvable: boolean
+  /** 最小整数宽限 ε；solvable 时非 null，原案卷相容时为 0 */
+  epsilon: number | null
+  /** 放宽后的启用证词区间（仅 solvable；按约束录入顺序） */
+  relaxed: RelaxedConstraintInfo[]
+  /** 放宽后系统的事件绝对时间窗（仅 solvable；无观测时全部为无法定时） */
+  windows: Map<number, WindowInfo>
+  /** 时间原点对应的真实时刻；无有效观测时为 null（全部事件无法定时） */
+  baseISO: string | null
+  /** ε = cap 仍不可满足时，该放宽系统中的一条矛盾环（用于展示复核） */
+  cycleAtCap: CycleInfo | null
+  /** 搜索过程的可满足性判定次数（二分而非逐分钟枚举的直接证据） */
+  probes: number
+}
+
 /** 最小修复搜索结果 */
 export interface RepairSearchResult {
   /** 是否找到至少一个可满足修复方案 */

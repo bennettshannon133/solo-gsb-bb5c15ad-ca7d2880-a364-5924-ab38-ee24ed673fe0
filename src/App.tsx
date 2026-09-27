@@ -22,6 +22,7 @@ import RepairPanel from './components/RepairPanel'
 import SchedulePanel from './components/SchedulePanel'
 import BatchImportPanel from './components/BatchImportPanel'
 import SnapshotPanel from './components/SnapshotPanel'
+import SlackPanel from './components/SlackPanel'
 import type { DslImportEntities } from './lib/dsl'
 
 export default function App() {
@@ -592,6 +593,15 @@ export default function App() {
         />
       </div>
 
+      {/* 统一宽限分析（全宽）：按需手动求解最小统一宽限 ε；结果只读，不写入案卷或本地存储 */}
+      <div style={{ marginTop: 16 }}>
+        <SlackPanel
+          events={events}
+          constraints={effectiveConstraints}
+          observations={observations}
+        />
+      </div>
+
       <div className="footer-note">
         事件、约束、观测、期望时刻与优先级均自动保存在浏览器 localStorage，刷新不丢失 ·
         旧版单一锚点存档会自动迁移为一条精确观测 ·
@@ -599,7 +609,8 @@ export default function App() {
         观测的新增、编辑、删除与其他任何编辑一样实时重算并持久化；观测作为事实记录不参与修复停用 ·
         批量证词导入先解析为只读预览，任何一行有错都禁止写入，确认后一次性合并（不覆盖现有数据）·
         案卷快照可导出为带格式版本的 JSON，导入时先完整校验、任一错误禁止应用，确认后整包替换当前案卷 ·
-        冗余证词审计实时重算且只读，不改写约束与本地存档
+        冗余证词审计实时重算且只读，不改写约束与本地存档 ·
+        统一宽限分析按需手动求解、结果只读，不写入案卷或本地存储，案卷或上限 M 改变后旧结果自动清除
       </div>
     </div>
   )
