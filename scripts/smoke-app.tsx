@@ -12,9 +12,11 @@ import CyclePanel from '../src/components/CyclePanel'
 import ObservationEditor from '../src/components/ObservationEditor'
 import AuditPanel from '../src/components/AuditPanel'
 import SnapshotPanel from '../src/components/SnapshotPanel'
+import SlackPanel, { SlackResultView } from '../src/components/SlackPanel'
 import { analyze, traceBound } from '../src/lib/graph'
 import { auditRedundancy } from '../src/lib/audit'
-import { buildConsistentSample } from '../src/lib/samples'
+import { computeUniformSlack } from '../src/lib/slack'
+import { buildConsistentSample, buildContradictionSample } from '../src/lib/samples'
 
 let failed = 0
 /** React SSR 会在插值文本之间插入 <!-- -->，先去除再做片段匹配 */
@@ -206,6 +208,58 @@ const pausedHtml = renderToString(
   h(AuditPanel, { events: auditEvents, constraints: auditConstraints, audit: null }),
 )
 check(pausedHtml, '冗余证词审计已暂停', '审计面板：矛盾暂停提示')
+
+// 5) 统一宽限分析面板：App 内渲染输入区；结果视图覆盖成功 / 无解 / 无观测三种形态
+check(appHtml, '统一宽限分析', '统一宽限分析')
+check(appHtml, '宽限上限', '统一宽限分析')
+check(appHtml, '开始分析', '统一宽限分析')
+check(appHtml, '不逐分钟枚举', '统一宽限分析')
+
+const bad = buildContradictionSample()
+const slackPanelHtml = renderToString(
+  h(SlackPanel, { events: bad.events, constraints: bad.constraints, observations: bad.observations }),
+)
+check(slackPanelHtml, '统一宽限分析', '宽限面板')
+check(slackPanelHtml, '条启用证词', '宽限面板')
+
+// 成功：矛盾示例上限 30 → ε = 10，列出放宽区间与时间窗
+const slackOk = {
+  events: bad.events,
+  constraints: bad.constraints,
+  observations: bad.observations,
+  cap: 30,
+  result: computeUniformSlack(bad.events, bad.constraints, bad.observations, 30),
+}
+const slackOkHtml = renderToString(h(SlackResultView, { run: slackOk }))
+check(slackOkHtml, 'ε = 10', '宽限结果：最小宽限')
+check(slackOkHtml, '放宽后的证词区间', '宽限结果：放宽区间')
+check(slackOkHtml, '[0, 30] 分钟', '宽限结果：下界截断后的放宽区间')
+check(slackOkHtml, '下界截断于 0', '宽限结果：下界截断标注')
+check(slackOkHtml, '可定时', '宽限结果：时间窗')
+check(slackOkHtml, '不写入案卷或浏览器本地存储', '宽限结果：只读说明')
+
+// 无解：上限 5 → 展示 ε = M 的矛盾链
+const slackFail = {
+  events: bad.events,
+  constraints: bad.constraints,
+  observations: bad.observations,
+  cap: 5,
+  result: computeUniformSlack(bad.events, bad.constraints, bad.observations, 5),
+}
+const slackFailHtml = renderToString(h(SlackResultView, { run: slackFail }))
+check(slackFailHtml, '上限内无解', '宽限无解')
+check(slackFailHtml, '可复核的矛盾环', '宽限无解：矛盾链')
+
+// 无观测：成功但全部事件标注无法定时
+const slackNoObs = {
+  events: bad.events,
+  constraints: bad.constraints,
+  observations: [],
+  cap: 30,
+  result: computeUniformSlack(bad.events, bad.constraints, [], 30),
+}
+const slackNoObsHtml = renderToString(h(SlackResultView, { run: slackNoObs }))
+check(slackNoObsHtml, '无法定时', '宽限：无观测标注无法定时')
 
 if (failed > 0) process.exit(1)
 console.log('smoke ok')

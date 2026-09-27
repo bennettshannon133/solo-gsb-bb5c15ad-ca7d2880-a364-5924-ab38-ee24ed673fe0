@@ -1257,6 +1257,84 @@ table.windows tr.traced td {
   margin: 0 2px;
 }
 
+/* ---------- 统一宽限分析 ---------- */
+.slack-panel {
+  border-color: rgba(77, 163, 255, 0.35);
+}
+.slack-desc {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin-bottom: 10px;
+}
+.slack-input-row {
+  align-items: center;
+}
+.slack-input-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.slack-stale-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.slack-error {
+  color: var(--danger-strong);
+  font-size: 12.5px;
+  margin-top: 6px;
+}
+.slack-result {
+  margin-top: 12px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+.slack-subtitle {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  margin: 10px 0 4px;
+}
+.slack-relax-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+}
+.slack-relax-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 8px;
+  flex-wrap: wrap;
+}
+.slack-relax-item .order-no {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.slack-relax-item .slack-arrow {
+  color: var(--text-muted);
+}
+.slack-interval {
+  font-family: var(--mono);
+  color: var(--ok);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.schedule-note.ok {
+  background: var(--ok-bg);
+  border: 1px solid rgba(63, 185, 80, 0.5);
+}
+.slack-readonly {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 /* ---------- 案卷快照 ---------- */
 .snapshot-panel .snapshot-row {
   display: flex;

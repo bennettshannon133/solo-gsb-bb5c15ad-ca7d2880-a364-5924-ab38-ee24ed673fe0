@@ -250,6 +250,43 @@ export interface AuditEntry {
   verdict: AuditVerdict
 }
 
+/** 统一宽限分析中一条启用证词的放宽结果 */
+export interface SlackRelaxedConstraint {
+  /** 证词（相对约束）id */
+  constraintId: string
+  /** 原区间 [originalMin, originalMax]（分钟） */
+  originalMin: number
+  originalMax: number
+  /** 统一放宽 ε 后的区间 [max(0, min−ε), max+ε]（分钟） */
+  min: number
+  max: number
+}
+
+/**
+ * 统一宽限分析结果（只读计算：不写入案卷或本地存储）。
+ * 求使全部启用证词与原有观测同时相容的最小整数宽限 ε（0 ≤ ε ≤ M）：
+ * 每条启用证词的间隔 [min, max] 统一变为 [max(0, min−ε), max+ε]，
+ * 早于/晚于方向不变；观测与停用证词不变。
+ */
+export interface SlackAnalysis {
+  /** 用户给定的非负整数分钟上限 M */
+  cap: number
+  /** 上限内的最小整数宽限 ε；上限内无解为 null */
+  epsilon: number | null
+  /** 原案卷（ε = 0）是否已可满足（此时 epsilon = 0） */
+  originalSatisfiable: boolean
+  /** 全部启用证词在结果 ε（无解时为 M）下的放宽区间，按约束录入顺序 */
+  relaxed: SlackRelaxedConstraint[]
+  /** 结果 ε 下放宽系统的各事件绝对时间窗（无解时为空表） */
+  windows: Map<number, WindowInfo>
+  /** 结果 ε 下放宽系统的时间基准；无有效观测为 null */
+  baseISO: string | null
+  /** 上限内无解时，ε = M 放宽系统中的一条矛盾链 */
+  cycle: CycleInfo | null
+  /** 结果 ε（无解时为 M）下放宽后的完整约束数组（矛盾链来源映射用） */
+  relaxedConstraints: Constraint[]
+}
+
 /** 最小修复搜索结果 */
 export interface RepairSearchResult {
   /** 是否找到至少一个可满足修复方案 */

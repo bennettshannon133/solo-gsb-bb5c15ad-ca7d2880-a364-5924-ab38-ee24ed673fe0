@@ -2,6 +2,7 @@ import { analyze, buildEdges, buildSystem, constraintToEdges, traceBound } from 
 import { auditRedundancy } from '../src/lib/audit'
 import { DEFAULT_STATE_LIMIT, findMinimalRepairs, MAX_PLANS } from '../src/lib/repair'
 import { computeMinDeviationSchedule } from '../src/lib/schedule'
+import { computeUniformSlack, relaxConstraints } from '../src/lib/slack'
 import { buildConsistentSample, buildContradictionSample, emptyState } from '../src/lib/samples'
 import { migrateState } from '../src/lib/storage'
 import { buildImportEntities, parseDsl } from '../src/lib/dsl'
@@ -1600,6 +1601,137 @@ function canon(v: unknown): string {
   assert(v.errors.length === 0 && v.state !== null, '时序矛盾不作为格式错误：允许导入')
   const r = analyze(v.state!.events, v.state!.constraints, v.state!.observations)
   assert(!r.satisfiable && !!r.cycle, '导入的矛盾快照由现有分析检出负环')
+}
+
+// ==================== 统一宽限分析 ====================
+
+// ---- 原案卷相容：直接返回 ε=0，区间不变，时间窗与直接分析一致 ----
+{
+  const s = buildConsistentSample()
+  const r = computeUniformSlack(s.events, s.constraints, s.observations, 30)
+  assert(r.cap === 30, '宽限：回传上限 M')
+  assert(r.epsilon === 0 && r.originalSatisfiable, '宽限：原案卷可满足时 ε=0')
+  assert(r.cycle === null, '宽限：成功时无矛盾链')
+  const enabled = s.constraints.filter((c) => c.enabled)
+  assert(r.relaxed.length === enabled.length, '宽限：放宽列表覆盖全部启用证词')
+  assert(
+    r.relaxed.map((x) => x.constraintId).join(',') === enabled.map((c) => c.id).join(','),
+    '宽限：放宽列表按证词录入顺序',
+  )
+  const byId = new Map(s.constraints.map((c) => [c.id, c]))
+  assert(
+    r.relaxed.every((x) => {
+      const c = byId.get(x.constraintId)!
+      return x.originalMin === c.min && x.originalMax === c.max && x.min === c.min && x.max === c.max
+    }),
+    '宽限：ε=0 时区间不变',
+  )
+  const direct = analyze(s.events, s.constraints, s.observations)
+  assert(r.baseISO === direct.baseISO, '宽限：ε=0 时基准一致')
+  assert(r.windows.get(1)!.latestOffset === direct.windows.get(1)!.latestOffset, '宽限：ε=0 时时间窗一致')
+}
+
+// ---- 矛盾示例：二分求得最小 ε=10（下界逐项截断），ε=9 仍矛盾 ----
+{
+  const s = buildContradictionSample()
+  const r = computeUniformSlack(s.events, s.constraints, s.observations, 30)
+  assert(r.epsilon === 10 && !r.originalSatisfiable, `宽限：矛盾示例最小 ε=10（实际 ${r.epsilon}）`)
+  assert(r.cycle === null, '宽限：成功时无矛盾链')
+  const at9 = analyze(s.events, relaxConstraints(s.constraints, 9), s.observations)
+  const at10 = analyze(s.events, relaxConstraints(s.constraints, 10), s.observations)
+  assert(!at9.satisfiable && at10.satisfiable, '宽限：ε=9 仍矛盾、ε=10 可行（最小性）')
+  // 放宽区间：[max(0,min−10), max+10]，方向不变
+  const byId = new Map(s.constraints.map((c) => [c.id, c]))
+  for (const x of r.relaxed) {
+    const c = byId.get(x.constraintId)!
+    assert(x.min === Math.max(0, c.min - 10) && x.max === c.max + 10, '宽限：放宽区间符合 [max(0,min−ε), max+ε]')
+  }
+  // 单调性全扫描：可行性恰好在 ε=10 处翻转（与二分结果一致）
+  for (let e = 0; e <= 30; e++) {
+    const ok = analyze(s.events, relaxConstraints(s.constraints, e), s.observations).satisfiable
+    assert(ok === e >= 10, `宽限：单调性扫描 ε=${e} 与二分结果一致`)
+  }
+  // 放宽后观测不变：A 仍被精确观测钉在基准 0
+  assert(r.windows.get(0)!.earliestOffset === 0 && r.windows.get(0)!.latestOffset === 0, '宽限：放宽后观测仍钉住 A')
+  assert(r.baseISO === s.observations[0].start, '宽限：基准不变')
+}
+
+// ---- 上限内无解：ε = M 时仍矛盾，展示该状态下的矛盾链 ----
+{
+  const s = buildContradictionSample()
+  const r = computeUniformSlack(s.events, s.constraints, s.observations, 5)
+  assert(r.epsilon === null, '宽限：上限 5 内无解')
+  assert(r.cycle !== null && r.cycle.totalWeight < 0, '宽限：展示 ε=M 时的矛盾链')
+  assert(r.relaxedConstraints.length === s.constraints.length, '宽限：回传 ε=M 下的放宽约束供矛盾链映射')
+  // 矛盾链与 ε=5 直接放宽后的分析一致
+  const direct = analyze(s.events, relaxConstraints(s.constraints, 5), s.observations)
+  assert(!direct.satisfiable && direct.cycle !== undefined, '宽限：ε=5 直接验证仍矛盾')
+  assert(r.cycle!.totalWeight === direct.cycle!.totalWeight, '宽限：矛盾链与 ε=M 系统一致')
+}
+
+// ---- 下界截断与只读性：min−ε 压到 0、方向保留、停用证词与入参不被修改 ----
+{
+  const cs: Constraint[] = [
+    { id: 'c1', aId: 'a', bId: 'b', relation: 'earlier', min: 3, max: 6, enabled: true },
+    { id: 'c2', aId: 'a', bId: 'b', relation: 'later', min: 1, max: 2, enabled: false },
+  ]
+  const relaxed = relaxConstraints(cs, 10)
+  assert(relaxed[0].min === 0 && relaxed[0].max === 16, '宽限：下界 max(0,min−ε) 截断于 0')
+  assert(relaxed[0].relation === 'earlier', '宽限：方向保留')
+  assert(relaxed[1].min === 1 && relaxed[1].max === 2, '宽限：停用证词不变')
+  assert(cs[0].min === 3 && cs[0].max === 6, '宽限：原证词不被修改（只读）')
+  assert(relaxed !== cs && relaxed[0] !== cs[0], '宽限：返回新数组新对象')
+  assert(relaxConstraints(cs, 0) === cs, '宽限：ε=0 原样返回')
+}
+
+// ---- 观测-约束混合冲突：最小 ε=5，观测保持不变 ----
+{
+  const events: TEvent[] = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]
+  const cs: Constraint[] = [
+    { id: 'c1', aId: 'b', bId: 'a', relation: 'later', min: 10, max: 20, enabled: true },
+  ]
+  const obs = [exactObs('oa', 'a', 0), exactObs('ob', 'b', 5)]
+  const r = computeUniformSlack(events, cs, obs, 10)
+  assert(r.epsilon === 5, `宽限：观测-约束混合冲突最小 ε=5（实际 ${r.epsilon}）`)
+  assert(r.windows.get(1)!.earliestOffset === 5 && r.windows.get(1)!.latestOffset === 5, '宽限：观测不变，B 仍钉在 +5')
+  assert(r.relaxed.length === 1 && r.relaxed[0].min === 5 && r.relaxed[0].max === 25, '宽限：唯一证词放宽为 [5,25]')
+}
+
+// ---- 纯观测矛盾：任何宽限都无解（观测不放宽）----
+{
+  const events: TEvent[] = [{ id: 'x', name: 'X' }]
+  const obs = [exactObs('o1', 'x', 0), exactObs('o2', 'x', 30)]
+  const r = computeUniformSlack(events, [], obs, 100)
+  assert(r.epsilon === null, '宽限：纯观测矛盾任何宽限都无解')
+  assert(r.cycle !== null && r.cycle.edges.every((e) => e.kind === 'observation'), '宽限：矛盾链只含观测边')
+  assert(r.relaxed.length === 0, '宽限：无启用证词时放宽列表为空')
+}
+
+// ---- 无观测：仍按相对约束求 ε，时间基准为空、全部事件无法定时 ----
+{
+  const s = buildContradictionSample()
+  const r = computeUniformSlack(s.events, s.constraints, [], 30)
+  assert(r.epsilon === 10, '宽限：无观测时仍按相对约束求 ε=10')
+  assert(r.baseISO === null, '宽限：无观测时无基准')
+  assert([...r.windows.values()].every((w) => w.status === 'disconnected'), '宽限：无观测时全部无法定时')
+}
+
+// ---- 上限 M=0：仅检查原案卷 ----
+{
+  const s = buildConsistentSample()
+  assert(computeUniformSlack(s.events, s.constraints, s.observations, 0).epsilon === 0, '宽限：M=0 且原案卷可满足 → ε=0')
+  const bad = buildContradictionSample()
+  const r = computeUniformSlack(bad.events, bad.constraints, bad.observations, 0)
+  assert(r.epsilon === null && r.cycle !== null, '宽限：M=0 且原案卷矛盾 → 无解并展示 ε=0 矛盾链')
+}
+
+// ---- 分析不修改案卷数据（只读）----
+{
+  const s = buildContradictionSample()
+  const before = JSON.stringify(s)
+  computeUniformSlack(s.events, s.constraints, s.observations, 30)
+  computeUniformSlack(s.events, s.constraints, s.observations, 5)
+  assert(JSON.stringify(s) === before, '宽限：分析不修改案卷数据')
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)
